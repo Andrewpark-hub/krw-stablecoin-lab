@@ -22,3 +22,6 @@ study_notes*.md
 # 프론트
 node_modules/
 dist/
+
+# 인텔리제이 설정
+.idea/
