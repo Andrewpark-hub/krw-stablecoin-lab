@@ -5,7 +5,7 @@
 ![OpenZeppelin](https://img.shields.io/badge/OpenZeppelin-5.1.0-4E5EE4)
 ![Network](https://img.shields.io/badge/Network-Testnet%20only-lightgrey)
 
-원화 스테이블코인을 발행사 입장에서 처음부터 만들어 보는 실습 레포입니다. **1 KRWS = 1원**으로 정하고, 발행과 상환부터 시작해서 준비금 확인, KYC, 동결, 발행 한도처럼 실제 발행사가 갖춰야 할 기능을 한 단계씩 붙여 나갈 계획입니다.
+원화 스테이블코인을 발행사 입장에서 처음부터 만들어 보는 실습 레포입니다. **1 KRWS = 1원**으로 정하고, 발행과 상환부터 시작해서 준비금 확인, KYC, 동결, 발행 한도처럼 실제 발행사가 갖춰야 할 기능을 한 단계씩 붙여 나갈 계획입니다. 나중에는 직접 만들고 있는 체인 [KRES](https://github.com/Andrewpark-hub/kres) 위로 옮기는 것까지 해 볼 생각입니다.
 
 > ⚠️ 테스트넷 학습용입니다. 실제 원화와 교환되지 않고, 메인넷에 배포하지 않습니다. 이미 있는 다른 원화 토큰(KRWT 등)과는 관련이 없습니다.
 
