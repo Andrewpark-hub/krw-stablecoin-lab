@@ -36,11 +36,31 @@
    - 원화는 1원 밑으로 안 쪼개서 `decimals()` 를 0으로 뒀다. USDC는 6이다.
    - 1 KRWS를 보내면 1원이 그대로 간다 (`test_Transfer_WholeWonOnly`).
 
+## 프로젝트 핵심 요소 (2단계)
+
+1단계에서는 은행에 원화가 한 푼도 없어도 발행사가 1조 원어치를 찍을 수 있었다. 법안들이 공통으로 요구하는 "준비자산 100% 보유"를 코드로 지키는 단계다.
+
+1. **준비금보다 많이 못 찍음**
+   - `issue` 할 때 `totalSupply() + amount <= reserve` 를 확인한다. 이번에 찍는 양만 보지 않고 이미 나간 양까지 더한다 (`test_Issue_CountsAlreadyIssued`).
+   - 딱 준비금만큼은 되고 1원만 넘어도 `NOT_ENOUGH_RESERVE` 로 막힌다 (`test_Issue_UpToReserve`).
+   - 은행 잔고가 줄었다고 보고가 올라오면 새 발행만 막히고, 이미 가진 토큰은 그대로 주고받을 수 있다 (`test_Reserve_DropBelowSupply`).
+
+2. **준비금은 발행사가 아니라 감사인이 올림**
+   - 처음엔 발행사가 은행 잔고를 직접 올리게 만들었다 (`test/naive/NaiveReserveKRWS.sol`). 그런데 발행사가 "1조 원 있음" 이라고 올리고 바로 1조 원을 찍으면 검사가 아무 의미가 없었다 (`test_Exploit_IssuerReportsFakeReserve`).
+   - 고친 버전은 생성자에서 감사인 주소(`auditor`)를 따로 받고, `reportReserve` 는 감사인만 부를 수 있다 (`test_Fix_OnlyAuditorCanReport`).
+   - 감사인과 발행사를 같은 주소로 만들면 생성자에서 `AUDITOR_IS_ISSUER` 로 막는다 (`test_Fix_AuditorCannotBeIssuer`).
+
+3. **보고는 하루만 유효**
+   - 감사인이 한 달 전에 올린 숫자를 믿고 계속 찍으면 안 된다. 보고하고 하루(`REPORT_VALID_FOR = 1 days`)가 지나면 `RESERVE_REPORT_OLD` 로 발행이 멈춘다 (`test_Fix_OldReportBlocksIssue`).
+   - 정확히 하루가 된 시점까지는 된다 (`test_Issue_ReportValidForExactlyOneDay`).
+   - 보고가 한 번도 없으면 올린 시각이 0이라 이 검사에서 먼저 막힌다 (`test_Fix_IssueWithoutReserveReverts`).
+
 ### 그리고 아직 못 고친 것
 
-- 은행에 원화가 한 푼도 없어도 발행사는 1조 원어치를 찍을 수 있다 (`test_Limit_IssueWithoutReserve`). 2단계에서 준비금 확인으로 막는다.
+- 감사인이 은행 잔고를 거짓으로 올리면 코드로는 알 수 없다 (`test_Limit_AuditorCanLie`). 발행사 혼자 거짓말하던 걸 두 곳이 짜야 가능하게 바꾼 것까지다.
+- 상환하면 은행에서 원화가 빠져나가는데, 감사인이 새로 올리기 전까지 `reserve` 는 예전 숫자 그대로다. 그 사이 발행사가 빠진 만큼 다시 찍을 수 있다 (`test_Limit_ReserveNotUpdatedAfterRedeem`). 보고를 하루만 믿게 해서 그 기간을 하루로 줄인 정도다.
 - `RedeemRequested` 는 신청 기록일 뿐이다. 발행사가 실제로 원화를 보냈는지는 체인에서 알 수 없다.
-- 발행사 키 하나가 털리면 끝이다. 6단계에서 멀티시그로 바꾼다.
+- 발행사 키 하나가 털리면 준비금 안에서는 마음대로 찍을 수 있다. 6단계에서 멀티시그로 바꾼다.
 
 ## 시스템 아키텍처 & 라이프사이클 흐름
 
@@ -65,6 +85,28 @@ sequenceDiagram
     B-->>A: 원화 3,000원 송금 (체인 밖)
 ```
 
+2단계에서 발행 앞에 감사인 보고가 하나 더 붙었다.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as 은행 계좌 (발행사)
+    actor U as 감사인 (auditor)
+    actor I as 발행사 (issuer)
+    participant K as KRWS.sol
+
+    Note over B,K: 준비금 보고 (test_Issue_UpToReserve)
+    U->>B: 잔고 10,000원 확인 (체인 밖)
+    U->>K: reportReserve(10000)
+    K->>K: reserve = 10000, reserveUpdatedAt = 지금
+
+    Note over B,K: 발행
+    I->>K: issue(alice, 10000)
+    K->>K: 보고가 하루 안인지, 0 + 10000 <= 10000 인지 확인
+    I->>K: issue(alice, 1)
+    K-->>I: NOT_ENOUGH_RESERVE
+```
+
 ## 기술 스택
 
 | 구분 | 사용 기술 |
@@ -84,6 +126,15 @@ sequenceDiagram
 > **해결 방안**
 > `test_Redeem_ZeroAmountReverts` 를 추가했다. 지금은 `onlyOwner`, `ZERO_AMOUNT` 두 개, `redeemCount++`, `decimals` 다섯 군데를 각각 지우면 실패하는 테스트가 하나씩 있다.
 
+> **문제 상황 (2단계)**
+> 보고가 한 번도 없을 때 발행하면 `RESERVE_REPORT_OLD` 로 막힐 거라고 생각했는데, 테스트에서는 `NOT_ENOUGH_RESERVE` 가 나왔다.
+>
+> **원인 분석**
+> Foundry 테스트는 `block.timestamp` 가 1에서 시작한다. 보고가 없으면 `reserveUpdatedAt` 이 0이라 `1 <= 0 + 1 days` 가 참이 되어 시간 검사를 그냥 통과했다. 실제 체인에서는 지금 시각이 17억 초쯤이라 시간 검사에서 먼저 막힌다. 테스트 환경과 실제 체인에서 다른 에러가 나고 있었다.
+>
+> **해결 방안**
+> `02_Reserve.t.sol` 의 `setUp` 에서 `vm.warp(1_763_000_000)` 으로 2025년 11월쯤 시각으로 옮겼다. 이제 테스트에서도 `RESERVE_REPORT_OLD` 가 나온다. 2단계 검사 여덟 군데(`ONLY_AUDITOR`, `NOT_ENOUGH_RESERVE`, `totalSupply()` 더하기, 시간 검사, `<=` 를 `<` 로, 보고 시각 저장, 준비금 저장, `AUDITOR_IS_ISSUER`)도 하나씩 지워서 매번 실패하는 테스트가 있는지 확인했다.
+
 ## 실행 가이드 (Quick Start)
 
 사전 조건: [Foundry](https://book.getfoundry.sh/getting-started/installation)
@@ -99,7 +150,7 @@ forge test -vv
 | 단계 | 내용 | 상태 |
 | --- | --- | --- |
 | 1 | 발행사만 발행, 보유자가 직접 상환 | ✅ 2026-11-07 |
-| 2 | 준비금 확인: 은행 잔고(가상 데이터)보다 많이 못 찍게 | |
+| 2 | 준비금 확인: 감사인이 올린 은행 잔고보다 많이 못 찍게 | ✅ 2026-11-14 |
 | 3 | KYC: 확인된 주소끼리만 주고받기 | |
 | 4 | 동결: 범죄 연루 주소 동결 ([stablecoin-freeze-zk-lab](https://github.com/Andrewpark-hub/stablecoin-freeze-zk-lab) 연결) | |
 | 5 | 하루 발행 한도와 긴급 정지 | |
@@ -112,6 +163,7 @@ forge test -vv
 
 ## 업데이트 기록
 
+- **2026-11-14** 2단계. 감사인 보고(`reportReserve`)와 발행 조건 두 개, 처음 만든 버전 `NaiveReserveKRWS.sol`, 테스트 12개 추가. 1단계의 `test_Limit_IssueWithoutReserve` 는 고쳐서 `test_Fix_IssueWithoutReserveReverts` 로 옮김. 전체 테스트 20개.
 - **2026-11-07** 1단계. `KRWS.sol`, 처음 만든 버전 `NaiveKRWS.sol`, 테스트 9개.
 
 ## 파일 구조
@@ -119,11 +171,13 @@ forge test -vv
 ```
 krw-stablecoin-lab/
 ├── src/
-│   └── KRWS.sol                 # 원화 스테이블코인 (1단계)
+│   └── KRWS.sol                 # 원화 스테이블코인 (2단계까지)
 ├── test/
-│   ├── 01_IssueRedeem.t.sol     # 발행, 상환 테스트 9개
+│   ├── 01_IssueRedeem.t.sol     # 발행, 상환 테스트 8개
+│   ├── 02_Reserve.t.sol         # 준비금 테스트 12개
 │   └── naive/
-│       └── NaiveKRWS.sol        # 처음 만든 버전 (발행사가 남의 잔고를 지움)
+│       ├── NaiveKRWS.sol        # 1단계 처음 만든 버전 (발행사가 남의 잔고를 지움)
+│       └── NaiveReserveKRWS.sol # 2단계 처음 만든 버전 (발행사가 준비금을 직접 올림)
 └── foundry.toml
 ```
 
