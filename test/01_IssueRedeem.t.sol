@@ -12,14 +12,19 @@ contract IssueRedeemTest is Test {
     NaiveKRWS naive;
 
     address issuer = makeAddr("issuer");
+    address auditor = makeAddr("auditor");
     address alice = makeAddr("alice");
     address bob = makeAddr("bob");
 
     event RedeemRequested(uint256 indexed requestId, address indexed holder, uint256 amount);
 
     function setUp() public {
-        krws = new KRWS(issuer);
+        krws = new KRWS(issuer, auditor);
         naive = new NaiveKRWS(issuer);
+
+        // 2단계부터는 준비금이 있어야 발행된다. 1단계 테스트는 넉넉하게 10만 원으로 시작한다.
+        vm.prank(auditor);
+        krws.reportReserve(100_000);
     }
 
     // --- 처음 만든 버전 ---
@@ -108,13 +113,6 @@ contract IssueRedeemTest is Test {
         assertEq(krws.balanceOf(bob), 1, "bob got 1 won");
     }
 
-    // --- 아직 못 고친 것 ---
-
-    function test_Limit_IssueWithoutReserve() public {
-        // 은행에 원화가 한 푼도 없어도 발행사는 1조 원어치를 찍을 수 있다 (2단계에서 막을 것)
-        vm.prank(issuer);
-        krws.issue(issuer, 1_000_000_000_000);
-
-        assertEq(krws.totalSupply(), 1_000_000_000_000, "minted without reserve");
-    }
+    // 1단계의 test_Limit_IssueWithoutReserve 는 2단계에서 고쳤다.
+    // test/02_Reserve.t.sol 의 test_Fix_IssueWithoutReserveReverts 로 옮겼다.
 }
