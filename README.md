@@ -62,6 +62,26 @@
 - `RedeemRequested` 는 신청 기록일 뿐이다. 발행사가 실제로 원화를 보냈는지는 체인에서 알 수 없다.
 - 발행사 키 하나가 털리면 준비금 안에서는 마음대로 찍을 수 있다. 6단계에서 멀티시그로 바꾼다.
 
+## 프로젝트 핵심 요소 (3단계)
+
+2단계까지는 지갑 주소만 있으면 누구나 KRWS를 받고 보낼 수 있었다. 은행 돈이랑 바꿀 수 있는 토큰이라 은행 계좌처럼 신분 확인(KYC)을 거친 사람만 쓰게 하는 단계다.
+
+1. **발행사가 KYC 결과를 올림**
+   - 신분증 확인은 체인 밖에서 하고, 발행사가 `setKyc(주소, true)` 로 결과만 올린다. 취소할 땐 `false` 를 올린다 (`test_Kyc_SetAndRevoke`).
+   - 발행사 말고는 못 바꾼다. 본인이 자기 주소를 확인된 걸로 바꾸는 것도, 감사인이 바꾸는 것도 막힌다 (`test_Fix_OnlyIssuerCanSetKyc`).
+
+2. **발행할 때만이 아니라 모든 이동에서 확인**
+   - 처음엔 `issue` 에서만 받는 사람 KYC를 봤다 (`test/naive/NaiveKycKRWS.sol`). 그런데 확인된 alice 한테 찍고 alice 가 확인 안 된 mallory 한테 보내면 그냥 갔다 (`test_Exploit_UnverifiedGetsTokensByTransfer`).
+   - 고친 버전은 OpenZeppelin ERC20 의 `_update` 를 덮어썼다. 발행, 전송, `transferFrom`, 상환이 전부 이 함수를 지나서 한 군데만 고치면 된다.
+   - 보내는 쪽과 받는 쪽을 둘 다 본다. 발행이면 보내는 쪽이 0 주소, 상환이면 받는 쪽이 0 주소라 그쪽은 건너뛴다.
+   - 확인 안 된 주소로는 발행도 전송도 `NOT_VERIFIED` 로 막힌다 (`test_Fix_IssueToUnverifiedReverts`, `test_Fix_TransferToUnverifiedReverts`). 확인이 취소된 주소는 보내는 것도 막힌다 (`test_Fix_RevokedCannotSend`).
+
+### 그리고 아직 못 고친 것 (3단계)
+
+- 확인이 취소된 주소의 토큰은 보낼 수도 상환할 수도 없이 그 지갑에 묶인다. 발행량에도 계속 잡힌다 (`test_Limit_RevokedTokensStuck`). 묶인 돈을 어떻게 처리할지는 4단계 동결에서 같이 정한다.
+- 발행사가 신분 확인 없이 아무 주소나 `true` 로 올려도 체인은 모른다 (`test_Limit_IssuerCanVerifyAnyone`). 2단계 감사인처럼 KYC도 다른 곳이 확인하게 할지는 아직 안 정했다.
+- `transferFrom` 은 보내는 쪽과 받는 쪽만 보고 버튼을 누른 사람(spender)은 안 본다. alice 가 approve 해 주면 KYC 없는 mallory 도 alice 돈을 bob 한테 옮길 수 있다 (`test_Limit_UnverifiedSpenderCanMove`). 9단계에서 Uniswap 라우터가 이 자리에 들어가니까 그때 다시 본다.
+
 ## 시스템 아키텍처 & 라이프사이클 흐름
 
 ```mermaid
@@ -107,6 +127,26 @@ sequenceDiagram
     K-->>I: NOT_ENOUGH_RESERVE
 ```
 
+3단계에서는 토큰이 움직일 때마다 양쪽 KYC를 본다.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor I as 발행사 (issuer)
+    actor A as alice (KYC 완료)
+    actor M as mallory (KYC 안 함)
+    participant K as KRWS.sol
+
+    Note over I,K: KYC 결과 올리기 (test_Kyc_SetAndRevoke)
+    I->>K: setKyc(alice, true)
+
+    Note over I,K: 전송 (test_Fix_TransferToUnverifiedReverts)
+    I->>K: issue(alice, 10000)
+    A->>K: transfer(mallory, 10000)
+    K->>K: _update 에서 alice 는 확인됨, mallory 는 아님
+    K-->>A: NOT_VERIFIED
+```
+
 ## 기술 스택
 
 | 구분 | 사용 기술 |
@@ -135,6 +175,15 @@ sequenceDiagram
 > **해결 방안**
 > `02_Reserve.t.sol` 의 `setUp` 에서 `vm.warp(1_763_000_000)` 으로 2025년 11월쯤 시각으로 옮겼다. 이제 테스트에서도 `RESERVE_REPORT_OLD` 가 나온다. 2단계 검사 여덟 군데(`ONLY_AUDITOR`, `NOT_ENOUGH_RESERVE`, `totalSupply()` 더하기, 시간 검사, `<=` 를 `<` 로, 보고 시각 저장, 준비금 저장, `AUDITOR_IS_ISSUER`)도 하나씩 지워서 매번 실패하는 테스트가 있는지 확인했다.
 
+> **문제 상황 (3단계)**
+> `_update` 에 KYC 검사를 넣고 테스트를 돌리니 1, 2단계 테스트 20개 중 11개가 `NOT_VERIFIED` 로 실패했다.
+>
+> **원인 분석**
+> 코드가 틀린 게 아니라 예전 테스트들이 alice, bob 한테 KYC 없이 발행하고 있었다. 이제 그건 막혀야 맞는 동작이다.
+>
+> **해결 방안**
+> `01`, `02` 의 `setUp` 에서 issuer, alice, bob 을 먼저 `setKyc` 해 두니 20개가 다시 통과했다. 3단계 검사 일곱 군데(보내는 쪽 검사, 받는 쪽 검사, 두 군데의 0 주소 건너뛰기, `setKyc` 의 `onlyOwner`, `verified` 값 저장, `KycUpdated` 이벤트)도 하나씩 지워서 매번 실패하는 테스트가 있는지 확인했다.
+
 ## 실행 가이드 (Quick Start)
 
 사전 조건: [Foundry](https://book.getfoundry.sh/getting-started/installation)
@@ -151,7 +200,7 @@ forge test -vv
 | --- | --- | --- |
 | 1 | 발행사만 발행, 보유자가 직접 상환 | ✅ 2026-11-07 |
 | 2 | 준비금 확인: 감사인이 올린 은행 잔고보다 많이 못 찍게 | ✅ 2026-11-14 |
-| 3 | KYC: 확인된 주소끼리만 주고받기 | |
+| 3 | KYC: 확인된 주소끼리만 주고받기 | ✅ 2026-11-22 |
 | 4 | 동결: 범죄 연루 주소 동결 ([stablecoin-freeze-zk-lab](https://github.com/Andrewpark-hub/stablecoin-freeze-zk-lab) 연결) | |
 | 5 | 하루 발행 한도와 긴급 정지 | |
 | 6 | 발행 승인을 여러 명 서명으로 (멀티시그) | |
@@ -163,6 +212,7 @@ forge test -vv
 
 ## 업데이트 기록
 
+- **2026-11-22** 3단계. `setKyc` 와 `_update` 의 KYC 검사, 처음 만든 버전 `NaiveKycKRWS.sol`, 테스트 10개 추가. 1, 2단계 테스트 `setUp` 에 KYC 세 줄 추가. 전체 테스트 30개.
 - **2026-11-14** 2단계. 감사인 보고(`reportReserve`)와 발행 조건 두 개, 처음 만든 버전 `NaiveReserveKRWS.sol`, 테스트 12개 추가. 1단계의 `test_Limit_IssueWithoutReserve` 는 고쳐서 `test_Fix_IssueWithoutReserveReverts` 로 옮김. 전체 테스트 20개.
 - **2026-11-07** 1단계. `KRWS.sol`, 처음 만든 버전 `NaiveKRWS.sol`, 테스트 9개.
 
@@ -171,13 +221,15 @@ forge test -vv
 ```
 krw-stablecoin-lab/
 ├── src/
-│   └── KRWS.sol                 # 원화 스테이블코인 (2단계까지)
+│   └── KRWS.sol                 # 원화 스테이블코인 (3단계까지)
 ├── test/
 │   ├── 01_IssueRedeem.t.sol     # 발행, 상환 테스트 8개
 │   ├── 02_Reserve.t.sol         # 준비금 테스트 12개
+│   ├── 03_Kyc.t.sol             # KYC 테스트 10개
 │   └── naive/
 │       ├── NaiveKRWS.sol        # 1단계 처음 만든 버전 (발행사가 남의 잔고를 지움)
-│       └── NaiveReserveKRWS.sol # 2단계 처음 만든 버전 (발행사가 준비금을 직접 올림)
+│       ├── NaiveReserveKRWS.sol # 2단계 처음 만든 버전 (발행사가 준비금을 직접 올림)
+│       └── NaiveKycKRWS.sol     # 3단계 처음 만든 버전 (발행할 때만 KYC를 봄)
 └── foundry.toml
 ```
 
