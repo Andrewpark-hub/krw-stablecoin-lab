@@ -22,6 +22,13 @@ contract ReserveTest is Test {
 
         // Foundry 는 block.timestamp 가 1 에서 시작한다. 실제 체인처럼 2025-11 쯤 시각으로 옮겨 둔다.
         vm.warp(1_763_000_000);
+
+        // 3단계부터는 KYC 확인된 주소끼리만 주고받는다. 2단계 테스트에 나오는 주소는 미리 확인해 둔다.
+        vm.startPrank(issuer);
+        krws.setKyc(issuer, true);
+        krws.setKyc(alice, true);
+        krws.setKyc(bob, true);
+        vm.stopPrank();
     }
 
     // 감사인이 은행 잔고를 올리는 걸 줄여 쓴 것

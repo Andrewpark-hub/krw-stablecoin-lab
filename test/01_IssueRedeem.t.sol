@@ -25,6 +25,13 @@ contract IssueRedeemTest is Test {
         // 2단계부터는 준비금이 있어야 발행된다. 1단계 테스트는 넉넉하게 10만 원으로 시작한다.
         vm.prank(auditor);
         krws.reportReserve(100_000);
+
+        // 3단계부터는 KYC 확인된 주소끼리만 주고받는다. 1단계 테스트에 나오는 주소는 미리 확인해 둔다.
+        vm.startPrank(issuer);
+        krws.setKyc(issuer, true);
+        krws.setKyc(alice, true);
+        krws.setKyc(bob, true);
+        vm.stopPrank();
     }
 
     // --- 처음 만든 버전 ---
